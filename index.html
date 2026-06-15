@@ -379,7 +379,7 @@ tr:hover td{background:#f8fafc}
         <div style="font-size:0.85rem;color:var(--muted);margin-top:4px">Trivandrum BA · Generated <span id="printDate"></span></div>
       </div>
       <div style="display:flex;gap:10px">
-        <button onclick="window.print()" style="background:var(--navy);color:white;border:none;padding:10px 20px;border-radius:8px;font-family:'DM Sans',sans-serif;font-size:0.85rem;font-weight:600;cursor:pointer">🖨 Print / Save PDF</button>
+        <button onclick="doPrint()" style="background:var(--navy);color:white;border:none;padding:10px 20px;border-radius:8px;font-family:'DM Sans',sans-serif;font-size:0.85rem;font-weight:600;cursor:pointer">🖨 Print / Save PDF</button>
         <button onclick="document.getElementById('printOverlay').style.display='none'" style="background:#f1f5f9;color:var(--navy);border:none;padding:10px 20px;border-radius:8px;font-family:'DM Sans',sans-serif;font-size:0.85rem;font-weight:600;cursor:pointer">✕ Close</button>
       </div>
     </div>
@@ -402,7 +402,30 @@ tr:hover td{background:#f8fafc}
 .month-cell { display:inline-flex;flex-direction:column;align-items:center;padding:10px 14px;border-radius:10px;min-width:80px;text-align:center; }
 </style>
 
-<!-- WHATSAPP SUMMARY OVERLAY -->
+<!-- EXCEL FALLBACK OVERLAY (for WebView/APK) -->
+<div id="xlFallback" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:10000;align-items:center;justify-content:center">
+  <div style="background:white;border-radius:16px;padding:24px;width:90%;max-width:500px;position:relative">
+    <div style="font-size:1rem;font-weight:700;color:var(--navy);margin-bottom:6px">📊 Report Ready</div>
+    <div style="font-size:.82rem;color:var(--muted);margin-bottom:14px">
+      Direct download is not supported in the app. Please use one of these options:
+    </div>
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <button id="xlOpenBtn" onclick="openXlDataUrl()" style="background:var(--navy);color:white;border:none;border-radius:10px;padding:12px;font-family:'DM Sans',sans-serif;font-size:.9rem;font-weight:600;cursor:pointer">
+        📂 Open Excel File
+      </button>
+      <div style="font-size:.78rem;color:var(--muted);text-align:center">— or open in browser —</div>
+      <button onclick="openInBrowser()" style="background:#f0fdf4;color:#15803d;border:1px solid #bbf7d0;border-radius:10px;padding:12px;font-family:'DM Sans',sans-serif;font-size:.9rem;font-weight:600;cursor:pointer">
+        🌐 Open in Chrome / Browser
+      </button>
+      <button onclick="document.getElementById('xlFallback').style.display='none'" style="background:#f1f5f9;color:var(--navy);border:none;border-radius:10px;padding:10px;font-family:'DM Sans',sans-serif;font-size:.85rem;font-weight:600;cursor:pointer">
+        ✕ Close
+      </button>
+    </div>
+    <div style="margin-top:14px;padding:10px;background:#fef9c3;border-radius:8px;font-size:.75rem;color:#854d0e">
+      💡 Tip: For best experience, open this file in <strong>Chrome browser</strong> on your phone — all download and print features work fully there.
+    </div>
+  </div>
+</div>
 <div id="waOverlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:9999;align-items:center;justify-content:center;display:none">
   <div style="background:white;border-radius:16px;padding:28px;width:90%;max-width:600px;max-height:90vh;overflow-y:auto;position:relative">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
@@ -820,7 +843,29 @@ function downloadExcel(){
   // Monthly Trend
   const s5=[['Area',...months]];areas.forEach(a=>s5.push([a,...months.map(m=>AM[a][m]||0)]));s5.push(['TOTAL',...months.map(m=>areas.reduce((t,a)=>t+(AM[a][m]||0),0))]);
   const ws5=XLSX.utils.aoa_to_sheet(s5);ws5['!cols']=[{wch:20},...months.map(()=>({wch:13}))];XLSX.utils.book_append_sheet(wb,ws5,'Monthly Trend');
-  XLSX.writeFile(wb,`BSNL_Sales_Crash_FOS_${s.m1}_vs_${s.m2}_${new Date().toISOString().slice(0,10)}.xlsx`);
+  // WebView-compatible download: use data URI instead of direct file write
+  const wbout = XLSX.write(wb, {bookType:'xlsx', type:'base64'});
+  const fname = `BSNL_Sales_${s.m1}_vs_${s.m2}_${new Date().toISOString().slice(0,10)}.xlsx`;
+  
+  // Try multiple download methods for compatibility
+  try {
+    // Method 1: Standard browser download
+    const link = document.createElement('a');
+    link.href = 'data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,' + wbout;
+    link.download = fname;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  } catch(e1) {
+    try {
+      // Method 2: Open in new tab (works in some WebViews)
+      const dataUrl = 'data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,' + wbout;
+      window.open(dataUrl, '_blank');
+    } catch(e2) {
+      // Method 3: Show base64 in textarea for manual copy (fallback)
+      showExcelFallback(wbout, fname);
+    }
+  }
 }
 /* ════════════════════════════════════════════════════
    CONSISTENT UNDERPERFORMERS
@@ -1439,9 +1484,87 @@ function filterReactTable() {
   }).join('');
 }
 
+
 /* ════════════════════════════════════════════════════
-   AUTO-NARRATIVE GENERATOR
+   WEBVIEW / APK COMPATIBILITY FIXES
    ════════════════════════════════════════════════════ */
+let _xlDataUrl = '';
+let _xlFname   = '';
+
+function showExcelFallback(base64, fname) {
+  _xlDataUrl = 'data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,' + base64;
+  _xlFname   = fname;
+  document.getElementById('xlFallback').style.display = 'flex';
+}
+
+function openXlDataUrl() {
+  try {
+    const link = document.createElement('a');
+    link.href = _xlDataUrl;
+    link.download = _xlFname;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    document.getElementById('xlFallback').style.display = 'none';
+  } catch(e) {
+    window.open(_xlDataUrl, '_blank');
+  }
+}
+
+function openInBrowser() {
+  // Attempt to open current page URL in external browser
+  try {
+    window.open(window.location.href, '_system');
+  } catch(e) {
+    window.open(window.location.href, '_blank');
+  }
+}
+
+function doPrint() {
+  // For WebView: hide everything except print overlay, trigger print
+  const overlay = document.getElementById('printOverlay');
+  if (!overlay) return;
+
+  // Try window.print first
+  try {
+    // Show overlay fullscreen before printing
+    overlay.style.position = 'fixed';
+    overlay.style.inset = '0';
+    overlay.style.zIndex = '9999';
+    overlay.style.display = 'block';
+
+    // Use a short delay to let the DOM settle
+    setTimeout(() => {
+      try {
+        window.print();
+      } catch(e) {
+        // window.print not available in WebView — show share instructions
+        showPrintInstructions();
+      }
+    }, 300);
+  } catch(e) {
+    showPrintInstructions();
+  }
+}
+
+function showPrintInstructions() {
+  // Inject a tip inside the print overlay
+  const tip = document.getElementById('printTip');
+  if (!tip) {
+    const div = document.createElement('div');
+    div.id = 'printTip';
+    div.style.cssText = 'background:#fef9c3;border:1px solid #fde68a;border-radius:10px;padding:14px;margin-bottom:16px;font-size:.82rem;color:#854d0e;line-height:1.6';
+    div.innerHTML = `<strong>📱 Saving as PDF in the app:</strong><br>
+      1. Tap the <strong>⋮ menu</strong> (3 dots) in your browser/app<br>
+      2. Select <strong>"Share"</strong> or <strong>"Print"</strong><br>
+      3. Choose <strong>"Save as PDF"</strong><br><br>
+      Or open this file in <strong>Chrome browser</strong> for direct PDF saving.`;
+    const content = document.getElementById('printContent');
+    if (content) content.parentNode.insertBefore(div, content);
+  }
+}
+
+
 function generateNarrative(s) {
   const areas = getAreas();
   const months = getMonths();
