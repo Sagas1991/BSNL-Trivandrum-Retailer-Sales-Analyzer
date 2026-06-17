@@ -151,6 +151,7 @@ tr:hover td{background:#f8fafc}
       <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
         <input type="text" class="search-box" id="tableSearch" placeholder="Search retailer, area or FOS…" oninput="filterTable()">
         <div class="top-n">Show:<select id="topN" onchange="filterTable()"><option value="50">Top 50</option><option value="100">Top 100</option><option value="all">All</option></select></div>
+        <select id="crashFosFilter" onchange="filterTable()"><option value="ALL">All FOS</option></select>
         <select id="sortCrash" onchange="filterTable()"><option value="pct">Sort: Drop %</option><option value="abs">Sort: Abs Drop</option><option value="name">Sort: Name</option><option value="area">Sort: Area</option><option value="fos">Sort: FOS</option></select>
       </div>
     </div>
@@ -176,6 +177,7 @@ tr:hover td{background:#f8fafc}
   </div>
   <div class="fos-filter-bar">
     <input type="text" id="fosSearch" placeholder="Search FOS name…" oninput="filterFosGrid()">
+    <select id="fosAreaFilter" onchange="filterFosGrid()"><option value="ALL">All Areas</option></select>
     <select id="fosSortBy" onchange="filterFosGrid()"><option value="drop_pct">Sort: Drop %</option><option value="drop_abs">Sort: Abs Drop</option><option value="cur">Sort: Current Sales ↓</option><option value="name">Sort: Name A–Z</option></select>
     <select id="fosFilter" onchange="filterFosGrid()"><option value="all">All FOS</option><option value="crashed">Declining only</option><option value="growth">Growing only</option></select>
     <span id="fosGridCount" style="font-size:.8rem;color:var(--muted);margin-left:auto"></span>
@@ -213,6 +215,8 @@ tr:hover td{background:#f8fafc}
       <div class="section-title" style="margin:0">⚠️ Consistent Underperformers <span id="upTableCount"></span></div>
       <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
         <input type="text" class="search-box" id="upSearch" placeholder="Search retailer, area or FOS…" oninput="filterUpTable()">
+        <select id="upAreaFilter" onchange="filterUpTable()"><option value="ALL">All Areas</option></select>
+        <select id="upFosFilter" onchange="filterUpTable()"><option value="ALL">All FOS</option></select>
         <select id="upMinMonths" onchange="filterUpTable()">
           <option value="2">2+ declining months</option>
           <option value="3" selected>3+ declining months</option>
@@ -256,6 +260,7 @@ tr:hover td{background:#f8fafc}
       <div class="section-title" style="margin:0">🏆 FOS Efficiency Ranking <span id="fsTableCount"></span></div>
       <div style="display:flex;gap:10px;align-items:center">
         <input type="text" class="search-box" id="fsSearch" placeholder="Search FOS…" oninput="filterFsTable()" style="width:200px">
+        <select id="fsAreaFilter" onchange="filterFsTable()"><option value="ALL">All Areas</option></select>
         <select id="fsSortBy" onchange="filterFsTable()">
           <option value="score">Sort: Efficiency Score</option>
           <option value="growth_pct">Sort: Growth %</option>
@@ -474,6 +479,18 @@ window.addEventListener('DOMContentLoaded',()=>{
   const areas=getAreas();
   const sel=document.getElementById('selArea');
   areas.forEach(a=>{const o=document.createElement('option');o.value=a;o.textContent=a;sel.appendChild(o);});
+  // Populate new filter dropdowns: Area filters for FOS Analysis, Underperformers, FOS Score; FOS filters for Crash List, Underperformers
+  const fosNames=Object.keys(FM).filter(f=>f!=='UNASSIGNED').sort();
+  const areaFilterIds=['fosAreaFilter','upAreaFilter','fsAreaFilter'];
+  areaFilterIds.forEach(id=>{
+    const el=document.getElementById(id);
+    if(el) areas.forEach(a=>{const o=document.createElement('option');o.value=a;o.textContent=a;el.appendChild(o);});
+  });
+  const fosFilterIds=['crashFosFilter','upFosFilter'];
+  fosFilterIds.forEach(id=>{
+    const el=document.getElementById(id);
+    if(el) fosNames.forEach(f=>{const o=document.createElement('option');o.value=f;o.textContent=f.length>30?f.substring(0,30)+'…':f;el.appendChild(o);});
+  });
   const m1=document.getElementById('selMonth1'),m2=document.getElementById('selMonth2');
   [m1,m2].forEach(s=>{s.innerHTML='';months.forEach((m,i)=>{const o=document.createElement('option');o.value=m;o.textContent=m+' 2026';if(i===0)o.selected=true;s.appendChild(o);});});
   if(months.length>1)m2.value=months[1];
@@ -556,7 +573,11 @@ function buildCrashTable(s){allCrashRows=getCrash(s).filter(r=>r.pct<0).sort((a,
 function filterTable(){
   const search=document.getElementById('tableSearch').value.toLowerCase();
   const topN=document.getElementById('topN').value,sort=document.getElementById('sortCrash').value;
-  let rows=allCrashRows.filter(r=>r.name.toLowerCase().includes(search)||r.area.toLowerCase().includes(search)||(r.fos||'').toLowerCase().includes(search));
+  const fosF=document.getElementById('crashFosFilter')?document.getElementById('crashFosFilter').value:'ALL';
+  let rows=allCrashRows.filter(r=>
+    (fosF==='ALL'||(r.fos||'')===fosF)&&
+    (r.name.toLowerCase().includes(search)||r.area.toLowerCase().includes(search)||(r.fos||'').toLowerCase().includes(search))
+  );
   if(sort==='abs')rows.sort((a,b)=>(a.base-a.cur)-(b.base-b.cur));
   else if(sort==='pct')rows.sort((a,b)=>a.pct-b.pct);
   else if(sort==='name')rows.sort((a,b)=>a.name.localeCompare(b.name));
@@ -660,11 +681,19 @@ function filterFosGrid(sOpt){
   const s=sOpt&&sOpt.m1?sOpt:getSel();
   const search=document.getElementById('fosSearch').value.toLowerCase();
   const sortBy=document.getElementById('fosSortBy').value,filter=document.getElementById('fosFilter').value;
+  const areaF=document.getElementById('fosAreaFilter')?document.getElementById('fosAreaFilter').value:'ALL';
   const months=getMonths();
   let list=[...fosCacheList];
   if(search)list=list.filter(f=>f.fos.toLowerCase().includes(search));
   if(filter==='crashed')list=list.filter(f=>f.pct<0);
   if(filter==='growth')list=list.filter(f=>f.pct>=0);
+  // Area filter — keep FOS that have at least one retailer in the selected area
+  if(areaF!=='ALL'){
+    list=list.filter(f=>{
+      const rd=FRD[f.fos]||{};
+      return Object.values(rd).some(d=>d.area===areaF);
+    });
+  }
   if(sortBy==='drop_pct')list.sort((a,b)=>a.pct-b.pct);
   else if(sortBy==='drop_abs')list.sort((a,b)=>(a.base-a.cur)-(b.base-b.cur));
   else if(sortBy==='cur')list.sort((a,b)=>b.cur-a.cur);
@@ -942,7 +971,11 @@ function filterUpTable(){
   const search=document.getElementById('upSearch').value.toLowerCase();
   const minM=parseInt(document.getElementById('upMinMonths').value)||3;
   const sortBy=document.getElementById('upSortBy').value;
+  const areaF=document.getElementById('upAreaFilter')?document.getElementById('upAreaFilter').value:'ALL';
+  const fosF=document.getElementById('upFosFilter')?document.getElementById('upFosFilter').value:'ALL';
   let rows=upAllRows.filter(r=>r.maxStreak>=minM);
+  if(areaF!=='ALL')rows=rows.filter(r=>r.area===areaF);
+  if(fosF!=='ALL')rows=rows.filter(r=>(r.fos||'')===(fosF));
   if(search)rows=rows.filter(r=>r.name.toLowerCase().includes(search)||r.area.toLowerCase().includes(search)||(r.fos||'').toLowerCase().includes(search));
   if(sortBy==='streak')rows.sort((a,b)=>b.maxStreak-a.maxStreak||b.totalDrop-a.totalDrop);
   else if(sortBy==='drop_total')rows.sort((a,b)=>b.totalDrop-a.totalDrop);
@@ -1059,8 +1092,15 @@ function filterFsTable(scoresIn){
   if(scoresIn) fsCacheScores=scoresIn;
   const search=document.getElementById('fsSearch').value.toLowerCase();
   const sortBy=document.getElementById('fsSortBy').value;
+  const areaF=document.getElementById('fsAreaFilter')?document.getElementById('fsAreaFilter').value:'ALL';
   let list=[...fsCacheScores];
   if(search)list=list.filter(f=>f.fos.toLowerCase().includes(search));
+  if(areaF!=='ALL'){
+    list=list.filter(f=>{
+      const rd=FRD[f.fos]||{};
+      return Object.values(rd).some(d=>d.area===areaF);
+    });
+  }
   if(sortBy==='score')list.sort((a,b)=>b.score-a.score);
   else if(sortBy==='growth_pct')list.sort((a,b)=>b.growthPct-a.growthPct);
   else if(sortBy==='crash_pct')list.sort((a,b)=>b.crashPct-a.crashPct);
